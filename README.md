@@ -1,3 +1,6 @@
+[![Docker](https://github.com/ukhsa-collaboration/cherami/actions/workflows/docker-build.yml/badge.svg)](https://github.com/ukhsa-collaboration/cherami/actions/workflows/docker-build.yml)
+[![Tests](https://github.com/ukhsa-collaboration/cherami/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/ukhsa-collaboration/cherami/actions/workflows/ci.yml)
+
 # cherami
 
 cherami is the mSCAPE orchestration module for pathogen pipelines.
@@ -20,8 +23,8 @@ Options:
 The reccomended way of installing this repo is using uv:
 
 ```bash
-git clone <repo>
-cd <repo>
+git clone https://github.com/ukhsa-collaboration/cherami
+cd cherami
 uv run pre-commit install
 uv run pytest
 ```
@@ -29,8 +32,8 @@ uv run pytest
 However other methods (such as conda or venv) will work:
 
 ```bash
-git clone <repo>
-cd <repo>
+git clone https://github.com/ukhsa-collaboration/cherami
+cd cherami
 conda create -n cherami python=3.12 "pip>=25.1"
 conda activate cherami
 pip install --group dev
@@ -38,6 +41,46 @@ pre-commit install
 ```
 
 This repo uses ruff for formatting and linting, enforced via CI and a pre-commit hook both of which are included in the dev dependencies.
+
+### Setting up a local RabbitMQ server for development
+
+A RabbitMQ pod can be created using `deploy_rabbitmq.sh` helper in `./scripts`. This creates a kubernetes pod running a RabbitMQ server and prints its IP address.
+
+To create a new exchange you can use the CLI tool `rabbitmqadmin` from the container:
+
+```bash
+kubectl exec -it rabbitmq -- /bin/bash 
+rabbitmqadmin -u admin -p password declare exchange name=cherami_test type=fanout durable=true
+```
+
+You will need to update the varys config file to point to the IP of the local pod.
+
+An example varys config file for this configuration:
+```json
+{
+  "version": "0.1",
+  "profiles": {
+    "cherami": {
+      "username": "admin",
+      "password": "password",
+      "amqp_url": "10.0.0.1",
+      "port": 5672,
+      "use_tls": false
+    }
+  }
+}
+```
+
+Then run `cherami` to listen to messages sent on the created exchange:
+
+```bash
+uv run cherami --exchange cherami_test --max-workers 4
+```
+
+An example helper script to test payloads is included in `./scripts/send.py` e.g:
+```bash
+uv run scripts/send.py
+```
 
 ### Adding a new pipeline
 
@@ -119,3 +162,7 @@ class PipelineOrchestrator:
 ```
 
 The orchestrator will pick up the new pipeline and will now include it in future samples.
+
+#### 3. Add tests for the new pipeline.
+
+Each pipeline is tested in the `./tests` directory. Tests should be written for the pipelines implementation of `evaluate_sample` and `generate_samplesheet`.
