@@ -2,15 +2,24 @@ from pathlib import Path
 
 import pytest
 
-from cherami.pipelines.base import Pipeline, PipelineConfig, PipelineCriteria, SampleQC
+from cherami.pipelines.base import BasePipeline, PipelineConfig
 
 
-class DummyPipeline(Pipeline):
+class DummyPipeline(BasePipeline):
+    def __init__(self, config: PipelineConfig, proc_names: dict[str, list[int]] | None = None):
+        self._config = config
+        self._proc_names = proc_names or {}
+
+    @property
+    def config(self) -> PipelineConfig:
+        return self._config
+
+    @property
+    def proc_names(self) -> dict[str, list[int]]:
+        return self._proc_names
+
     def generate_samplesheet(self, samples, job_id):
         return
-
-    def evaluate_sample(self, sample_qc: SampleQC) -> bool:
-        return True
 
 
 @pytest.fixture
@@ -32,34 +41,22 @@ def pipeline_config():
         output_dir=output_dir,
         namespace="cherami",
         container="idont:exist",
+        backoff_limit=5,
+        max_retries=1,
+        retry_timeout=10,
+        job_timeout=3600,
     )
 
 
 @pytest.fixture
-def pipeline_criteria():
-    return PipelineCriteria(
-        min_taxon_reads=10,
-        min_total_reads=100,
-        require_spike=True,
-        qc_pass=True,
-        percentage_genus=0.5,
-        min_total_species_reads=20,
-    )
+def pipeline(pipeline_config):
+    return DummyPipeline(config=pipeline_config)
 
 
 @pytest.fixture
-def pipeline(pipeline_config, pipeline_criteria):
-    return DummyPipeline(config=pipeline_config, criteria=pipeline_criteria)
-
-
-@pytest.fixture
-def pipeline_proc_names(pipeline_config, pipeline_criteria):
+def pipeline_proc_names(pipeline_config):
     proc_names = {"NFCORE_DEMO:DEMO:FASTQC (SAMPLE1_PE)": [0, 5]}
-    return DummyPipeline(
-        config=pipeline_config,
-        criteria=pipeline_criteria,
-        proc_names=proc_names,
-    )
+    return DummyPipeline(config=pipeline_config, proc_names=proc_names)
 
 
 @pytest.fixture
