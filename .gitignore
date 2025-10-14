@@ -11,3 +11,6 @@ wheels/
 
 # Job yamls
 job*
+
+# Other
+.vscode/

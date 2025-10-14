@@ -8,15 +8,10 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
-@dataclass
-class PipelineResult:
-    pipeline_name: str
-    job_id: str
-    success: bool
-
-
-@dataclass
+@dataclass(frozen=True)
 class PipelineConfig:
+    """Stores the configuration for a pipeline. Should be implemented for each pipeline separately."""
+
     ## general
     name: str
     version: str
@@ -35,59 +30,82 @@ class PipelineConfig:
     ## k8 configs
     namespace: str
     container: str
+    backoff_limit: int
+    max_retries: int
+    retry_timeout: int
+    job_timeout: int
 
 
-@dataclass
-class PipelineCriteria:
-    min_taxon_reads: int
-    min_total_reads: int
-    require_spike: bool
-    qc_pass: bool
-    percentage_genus: float
-    min_total_species_reads: int
+class BasePipeline(ABC):
+    """
+    Abstract class for defining a pipeline.
 
+    Attributes:
+        config: `PipelineConfig` object containing configuration for the pipeline.
+        proc_names: Optional dictionary mapping process names to allowed exit codes for evaluating
+                    the nextflow trace file. If not provided, all processes must exit with code 0
+                    for the pipeline to be considered successful.
+    """
 
-@dataclass
-class SampleQC:
-    sample_id: str
-    qc_pass: bool
-    total_reads: int
-    spike_reads: int
-    taxon_reads: dict[str, int]
-    genus_percentage: float = 0.0
-    species_reads: int = 0
+    @property
+    @abstractmethod
+    def config(self) -> PipelineConfig:
+        """Pipeline configuration implemented via a PipelineConfig dataclass."""
+        ...
 
-
-class Pipeline(ABC):
-    def __init__(
-        self,
-        config: PipelineConfig,
-        criteria: PipelineCriteria,
-        proc_names: dict[str, list[int]] | None = None,
-    ) -> None:
-        self.config = config
-        self.critera = criteria
-        self.proc_names = proc_names if proc_names is not None else {}
-        self._check_paths()
+    @property
+    def proc_names(self) -> dict[str, list[int]]:
+        """
+        Nextflow process names mapped to allowed exit codes for trace file evaluation.
+        Override if nextflow proccess have allowed exit codes to be handelled in the orchestator
+        """
+        return {}
 
     @abstractmethod
-    def generate_samplesheet(self, samples: list[str], job_id: str) -> str | None: ...
+    def generate_samplesheet(self, samples: list[str]) -> str | None: ...
+    """
+    Generates a samplesheet for the pipeline if applicable.
+    Args:
+        samples: List of sample identifiers.
 
-    @abstractmethod
-    def evaluate_sample(self, sample_qc: SampleQC) -> bool: ...
+    Returns:
+        Path to the generated samplesheet file or None if not applicable.
+    """
 
     def _check_paths(self) -> None:
+        """
+        Check if configured paths exist and log warnings if they don't.
+        """
         if not self.config.work_dir.exists():
-            logger.warning("Configured output_dir '%s' does not exist", self.config.work_dir)
+            logger.warning("Configured work_dir '%s' does not exist", self.config.work_dir)
 
         if not self.config.output_dir.exists():
-            logger.warning("Configured nf_config_path '%s' does not exist", self.config.output_dir)
+            logger.warning("Configured output_dir '%s' does not exist", self.config.output_dir)
 
         if not self.config.nf_config_path.exists():
             logger.warning("Configured nf_config_path '%s' does not exist", self.config.nf_config_path)
 
+    def validate(self) -> None:
+        """
+        Validate pipeline configuration.
+        """
+        self._check_paths()
+
     ## inspired by https://github.com/CLIMB-TRE/roz/blob/bd0ec88b29f9fd0fc18ca1cc500ad385128c121a/roz_scripts/mscape/mscape_ingest_validation.py#L997
     def evaluate_exit_status(self, trace_file: Path) -> bool:
+        """
+        Parses a nextflow trace file to determine if the pipeline completed successfully.
+
+        By default, all processes must exit with code 0 for the pipeline to be considered successful.
+        If `proc_names` is provided, only those processes are checked against their allowed exit codes
+        for the pipeline to be considered successful.
+
+        Args:
+            trace_file: Path to the nextflow trace file.
+
+        Returns:
+            True if the pipeline completed successfully, False otherwise.
+        """
         try:
             with trace_file.open("r") as trace_fh:
                 reader = csv.DictReader(trace_fh, delimiter="\t")
@@ -122,6 +140,16 @@ class Pipeline(ABC):
             return False
 
     def create_job_manifest(self, samplesheet_path: str | None, job_id: str) -> dict[str, Any]:
+        """
+        Creates a Kubernetes Job manifest for the pipeline.
+
+        Args:
+            samplesheet_path: Path to the samplesheet file, if applicable.
+            job_id: Unique job ID for this pipeline run.
+
+        Returns:
+            A dictionary representing the Kubernetes Job manifest.
+        """
         job_name = f"{self.config.name}-{job_id}"
 
         job_output_dir = self.config.output_dir / job_id
@@ -159,7 +187,7 @@ class Pipeline(ABC):
             },
             "spec": {
                 "ttlSecondsAfterFinished": 120,
-                "backoffLimit": 1,
+                "backoffLimit": self.config.backoff_limit,
                 "template": {
                     "spec": {
                         "hostname": job_name,

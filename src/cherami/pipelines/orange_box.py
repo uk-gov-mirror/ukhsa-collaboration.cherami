@@ -8,11 +8,11 @@ logger = logging.getLogger(__name__)
 
 
 @register_pipeline
-class SARSCoV2Pipeline(BasePipeline):
+class OrangeBoxPipeline(BasePipeline):
     @property
     def config(self) -> PipelineConfig:
         return PipelineConfig(
-            name="sarscov2",
+            name="orange_box",
             version="0.1.0",
             path="nf-core/demo",
             cpus=4,

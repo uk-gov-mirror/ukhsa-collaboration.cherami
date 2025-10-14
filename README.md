@@ -6,15 +6,27 @@
 cherami is the mSCAPE orchestration module for pathogen pipelines.
 
 ## Usage
+
 ```
-Usage: cherami [OPTIONS]
+Usage: cherami [OPTIONS] COMMAND [ARGS]...
+
+Commands:
+  evaluate
+  run
+  watch
+```
+
+### Watch
+```
+Usage: cherami watch [OPTIONS]
 
 Options:
-  --max-jobs INTEGER   Maximum number of concurrent pipeline jobs
-  --varys-config FILE  Path to varys config file
-  --varys-log FILE     Path to varys log
-  --help               Show this message and exit.
-```
+  --max-samples INTEGER  Maximum number of concurrent samples
+  --profile TEXT         Execution profile to use  [required]
+  --varys-log FILE       Path to varys log
+  --sample-log FILE      Path to JSONL file for per-sample results
+  --help                 Show this message and exit.
+  ```
 
 
 ## Development
@@ -38,6 +50,7 @@ conda create -n cherami python=3.12 "pip>=25.1"
 conda activate cherami
 pip install --group dev
 pre-commit install
+pytest
 ```
 
 This repo uses ruff for formatting and linting, enforced via CI and a pre-commit hook both of which are included in the dev dependencies.
@@ -71,40 +84,126 @@ An example varys config file for this configuration:
 }
 ```
 
-Then run `cherami` to listen to messages sent on the created exchange:
-
-```bash
-uv run cherami --exchange cherami_test --max-workers 4
-```
+Then run `cherami` to listen to messages sent on the created exchange
 
 An example helper script to test payloads is included in `./scripts/send.py` e.g:
 ```bash
 uv run scripts/send.py
 ```
 
-### Adding a new pipeline
+### Pipelines and Profiles
 
-#### 1. Defining the pipeline template
+cherami can be broken down into 2 major components that interact with eachother, Pipelines and Profiles.
 
-Pipelines are implemented in the `pipelines` subpackage (`src/cherami/pipelines`). Each pipeline should be added as a new module with an appropriate name. For example `mpox.py`
+#### Profiles
 
-`Pipeline` classess act as templates for a pipeline and define all relevant information, as such all pipelines must inherit the base `Pipeline` class, and thus a basic implementation would look like so:
+Profiles control what pipelines to run for a given sample, as well as other things like the RabbitMQ message queue to listen to or what should happen once a sample completes. Profiles allow pipelines to run with different message queues, or different pipeline selection criteria depending on the use case. They are implemented in the profiles subpackage (`src/cherami/profiles`). 
+
+Each profile should inherit from the profile base class, which defines key things each profile requires. The 2 important abstract methods are `select_pipelines` which should return a list of `Pipeline` objects to be run on a given sample, and `on_sample_complete` which should implement any actions to run once a sample completes, e.g. Log a new message to a "completed" message queue. As these are abstract it is up to the developer of the profile to provide the actual logic for both of these.
+
+##### Adding a new Profile
+
+###### 1. Defining the profile
+
+Profiles should be added as a new module in the `profiles` subpackage with an appropriate name. For example `decision_logic.py`
+
+All profiles must inherit the base `BaseProfile` class, and thus a basic implementation would look like so:
 ```python
-from cherami.pipelines.base import Pipeline
-class MpoxPipeline(Pipeline): ...
+from cherami.profiles.base import BaseProfile
+from cherami.profiles.registry import register_profile
+
+@register_profile
+class DecisionLogicProfile(BaseProfile): ...
 ```
 
-The base `Pipeline` class provides methods for things such as filepath and completion status validation and creating job manifests to submit to k8. To faciliate this a `Pipeline` expects 2 properties - a `PipelineConfig` and `PipelineCriteria` dataclass (defined in `base.py`), provided when the class is initalised.
+The `BaseProfile` class requires implementation of each of its abstract methods/properties.
+
+Extending the class above, a full implementation would look like so:
+```python
+from cherami.profiles.base import BaseProfile
+from cherami.profiles.registry import register_profile
+from cherami.pipelines import available_pipelines
+
+@register_profile
+class DecisionLogicProfile(BaseProfile):
+    def __init__(self) -> None:
+        self._available_pipelines = available_pipelines()
+
+    def select_pipelines(self, sample_id: str) -> Sequence[BasePipeline] | None:
+        ## Fetch QC data from Onyx and evaluate against some criteria
+        ## Return list of pipelines that should run
+        ...
+
+    def on_sample_complete(self, run: SampleRun, varys_client, varys_message) -> None:
+        ## Handle completion e.g
+        if run.success:
+          varys_client.acknowledge_message(varys_message)
+        ...
+
+    @property
+    def name(self) -> str:
+        return "decision_logic"
+
+    @property
+    def exchange(self) -> str:
+        return "cherami_decision_logic"
+
+    @property
+    def queue_suffix(self) -> str:
+        return "cherami"
+
+    @property
+    def varys_config_path(self) -> Path:
+        return Path("./varys.config")
+```
+
+###### 2. Registering the profile
+
+Profiles are automatically registered using the `@register_profile` decorator. To make the profile available, import it in `src/cherami/profiles/__init__.py`:
+
+```python
+from cherami.profiles.decision_logic import DecisionLogicProfile
+```
+
+The profile can then be selected using the `--profile` flag when running cherami.
+
+###### 3. Add tests for the new profile
+
+Each profile should be tested in the `./tests` directory. Tests should be written for the profile's implementation of `select_pipelines` to ensure samples are correctly evaluated against criteria.
+
+#### Pipelines
+
+If Profiles define when to run a sample, Pipelines define how to run them (via Kubernetes). Pipelines act as a template to define the configuration required to run a sample by specifying things like the compute limits, output paths etc. The ultimate end product of a Pipeline is a [Job Manifest](https://kubernetes.io/docs/concepts/workloads/controllers/job/). When a profile selects a pipeline for a sample, the orchestrator uses the pipeline template to constuct a kubernetes job and submit it.
+
+Pipelines are implemented in the `pipelines` subpackage (`src/cherami/pipelines`). Each pipeline should inherit from the pipeline base class, which defines key things each pipeline requires. It implements 1 abstract method `generate_samplesheet` as each samplesheet might be bespoke to each pipeline. As these are abstract it is up to the developer of the profile to provide the actual logic for both of these.
+
+##### Adding a new Pipeline
+
+###### 1. Defining the pipeline template
+
+`BasePipeline` classes act as templates for a pipeline and define all relevant information, as such all pipelines must inherit the base `BasePipeline` class, and thus a basic implementation would look like so:
+```python
+from cherami.pipelines.base import BasePipeline, PipelineConfig
+from cherami.pipelines.registry import register_pipeline
+
+@register_pipeline
+class MpoxPipeline(BasePipeline): ...
+```
+
+The base `BasePipeline` class provides methods for things such as filepath validation, completion status checking, and creating job manifests to submit to k8. To facilitate this a `BasePipeline` expects a `PipelineConfig` dataclass (defined in `base.py`), provided when the class is initialized.
+
+Each pipeline should be added as a new module with an appropriate name. For example `mpox.py`
 
 The `PipelineConfig` dataclass contains properties relating to the execution of the pipeline, e.g CPU and memory requirements, and the path to the nextflow pipeline.
-
-The `PipelineCriteria` dataclass contains porperties relating to the decision logic, and define a criteria for that pipeline to be run, e.g. minimum total reads, percenatge of genus level classifications etc.
 
 These should be defined in the class constructor like so (truncated - check the class definition in `base.py` for all the fields):
 
 ```python
-from cherami.pipelines.base import Pipeline
-class MpoxPipeline(Pipeline):
+from cherami.pipelines.base import BasePipeline, PipelineConfig
+from cherami.pipelines.registry import register_pipeline
+
+@register_pipeline
+class MpoxPipeline(BasePipeline):
     def __init__(self):
         config = PipelineConfig(
             name="mpox",
@@ -114,55 +213,33 @@ class MpoxPipeline(Pipeline):
             mem="8G",
             ...
         )
-        criteria = PipelineCriteria(
-            min_taxon_reads=1000,
-            min_total_reads=10,
-            ...
-        )
-        super().__init__(
-            config=config,
-            criteria=criteria,
-        )
+        super().__init__(config=config)
 ```
 
-Additionaly the `Pipline` class implements 2 abstract methods - `evaluate_sample` and `generate_samplesheet` which MUST be implemented by the child class. These are abstract as each pipeline may want to implement custom logic for each of these, i.e. non-standard samplesheets across each pipeline, or evaluation criteria specific to each pipeline.
+Additionally the `BasePipeline` class implements an abstract method - `generate_samplesheet` which MUST be implemented by the child class. These are abstract as each pipeline may want to implement custom logic for this i.e. non-standard samplesheets across each pipeline.
 
-Extending the class above, these should be implemneted like so:
+Extending the class above, these should be implemented like so:
 ```python
-from cherami.pipelines.base import Pipeline
-class MpoxPipeline(Pipeline):
+from cherami.pipelines.base import BasePipeline, PipelineConfig
+from cherami.pipelines.registry import register_pipeline
+
+@register_pipeline
+class MpoxPipeline(BasePipeline):
     def __init__(self): ...
 
-    def evaluate_sample(self, sample_qc: SampleQC) -> bool:
-        return sample_qc.genus_percentage >= self.critera.percentage_genus
-
-    def generate_samplesheet(self, samples: list[str]):
+    def generate_samplesheet(self, samples: list[str], job_id: str) -> str | None:
         ## TODO: Implement the construction logic here
         return
 ```
 
-NOTE: The `evaluate_sample` method expects a `SampleQC` dataclass. This class is a counterpart to `SampleCriteria` and stores the QC results returned from Onyx for easy comparison.
+###### 2. Registering the pipeline
 
-#### 2. Adding the pipeline to the orchestrator.
+Pipelines are automatically registered using the `@register_pipeline` decorator. To make the pipeline available, import it in `src/cherami/pipelines/__init__.py`:
 
-Each pipeline is instantiated centerally in the `PipelineOrchestrator` in the `_init_pipelines()` function, returning a list of pipeline objects. New pipelines should be added to this function like so:
 ```python
-## import the new pipeline
 from cherami.pipelines.mpox import MpoxPipeline
-## add to the orchestrator
-class PipelineOrchestrator:
-    ...
-    def _init_pipelines(self) -> Sequence[Pipeline]:
-        pipelines = [
-            SARSCoV2Pipeline(),
-            MpoxPipeline(),
-        ]
-        return pipelines
-
 ```
 
-The orchestrator will pick up the new pipeline and will now include it in future samples.
+###### 3. Add tests for the new pipeline.
 
-#### 3. Add tests for the new pipeline.
-
-Each pipeline is tested in the `./tests` directory. Tests should be written for the pipelines implementation of `evaluate_sample` and `generate_samplesheet`.
+Each pipeline is tested in the `./tests` directory. Tests should be written for the pipelines implementation of `generate_samplesheet`.
