@@ -7,10 +7,11 @@ from cherami import subcommands
 
 @click.group()
 @click.option(
-    "--sample-log",
-    help="Path to JSONL file for per-pipeline results",
+    "--audit_db",
+    envvar="CHERAMI_AUDIT_DB",
+    help="Path to audit SQLite database",
     type=click.Path(dir_okay=False, path_type=Path),
-    default=Path("./sample_log.jsonl"),
+    required=True,
 )
 @click.option(
     "--log",
@@ -19,22 +20,28 @@ from cherami import subcommands
     default=None,
 )
 @click.option(
-    "--log-level",
+    "--log_level",
     help="Logging level",
-    type=click.Choice(["DEBUG", "INFO", "WARNING", "ERROR"], case_sensitive=False),
+    type=click.Choice(
+        ["DEBUG", "INFO", "WARNING", "ERROR"], case_sensitive=False
+    ),
     default="INFO",
 )
 @click.pass_context
-def cli(click_context: click.Context, sample_log: Path, log: Path | None, log_level: str) -> None:
+def cli(
+    click_context: click.Context,
+    audit_db: Path,
+    log: Path | None,
+    log_level: str,
+) -> None:
     """Cherami command group."""
     click_context.ensure_object(dict)
-    click_context.obj["sample_log"] = sample_log
+    click_context.obj["audit_db"] = audit_db
     click_context.obj["log"] = log
     click_context.obj["log_level"] = log_level
 
 
-cli.add_command(subcommands.spawn)
-cli.add_command(subcommands.run)
+cli.add_command(subcommands.serve)
 cli.add_command(subcommands.describe)
 cli.add_command(subcommands.evaluate)
 
