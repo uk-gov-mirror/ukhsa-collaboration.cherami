@@ -31,6 +31,9 @@ class StrepPneumoPipeline(Pipeline):
                 )
                 if not climb_records:
                     raise ValueError("no_records_found")
+                # Pneumokity requires 2 fastqs as input so for SE pass same fastq twice
+                if climb_records["human_filtered_reads_2"] == "":
+                    climb_records["human_filtered_reads_2"] = climb_records["human_filtered_reads_1"]
                 try:
                     row = {
                         "climb_id": climb_id,
