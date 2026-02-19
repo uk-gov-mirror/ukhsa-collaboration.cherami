@@ -2,7 +2,7 @@ import csv
 import logging
 from functools import cache
 from pathlib import Path
-from onyx import OnyxClient
+from onyx import OnyxClient, Onyx Config
 
 from cherami.config import PipelineConfig, WorkerConfig
 from cherami.pipelines.pipeline import Pipeline
@@ -12,7 +12,7 @@ from cherami.utils import init_onyx
 logger = logging.getLogger(__name__)
 
 @cache
-def onyx_config():
+def onyx_config() -> OnyxConfig:
     return init_onyx()
 
 class StrepPneumoPipeline(Pipeline):
