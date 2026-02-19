@@ -81,7 +81,7 @@ class StrepPneumoPipeline(Pipeline):
         )
 
 
-    def should_run(self, climb_id: str) -> bool:
+    def should_run(self, sample_id: str) -> bool:
         """Determine whether the Strep pneumo pipeline should run for the given sample.
         When this returns False, the worker calls `on_skip()` instead of launching the pipeline.
 
@@ -95,7 +95,7 @@ class StrepPneumoPipeline(Pipeline):
         with OnyxClient(onyx_config()) as client:
             climb_records = client.get(
                 project="synthscape",
-                climb_id=climb_id,
+                climb_id=sample_id,
                 include=[
                     "classifier_calls__taxon_id",
                     "classifier_calls__count_descendants",
