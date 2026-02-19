@@ -13,6 +13,21 @@ logger = logging.getLogger(__name__)
 
 
 class StrepPneumoPipeline(Pipeline):
+
+    @property
+    def proc_names(self) -> dict[str, list[int]]:
+        """Optional mapping of Nextflow process names to their allowed exit codes.
+
+        Returns:
+            Process-specific allowed exit codes used when evaluating trace files. When
+            empty, every process must exit with code 0.
+        """
+        return {
+            "run_kractor": [0], # Placeholder - add allowed error codes/behaviour when implemented
+            "run_pneumokity": [0], # Placeholder - add allowed error codes/behaviour when implemented
+            "add_pneumokity_results_onyx": [0] # Placeholder - add allowed error codes/behaviour when implemented
+        }
+
     def generate_samplesheet(
         self, samples: list[str], job_id: str, output_filepath: Path
     ) -> None:
