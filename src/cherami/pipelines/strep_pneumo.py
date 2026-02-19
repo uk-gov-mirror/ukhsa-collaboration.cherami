@@ -2,7 +2,7 @@ import csv
 import logging
 from functools import cache
 from pathlib import Path
-from onyx import OnyxClient, Onyx Config
+from onyx import OnyxClient, OnyxConfig
 
 from cherami.config import PipelineConfig, WorkerConfig
 from cherami.pipelines.pipeline import Pipeline
