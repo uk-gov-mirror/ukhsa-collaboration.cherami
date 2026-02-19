@@ -1,7 +1,7 @@
 import csv
 import logging
 from pathlib import Path
-
+from functools import cache
 from onyx import OnyxClient
 
 from cherami.config import PipelineConfig, WorkerConfig
@@ -11,6 +11,9 @@ from cherami.utils import init_onyx
 
 logger = logging.getLogger(__name__)
 
+@cache
+def onyx_config():
+    return init_onyx()
 
 class StrepPneumoPipeline(Pipeline):
 
@@ -32,9 +35,8 @@ class StrepPneumoPipeline(Pipeline):
     def generate_samplesheet(
         self, samples: list[str], job_id: str, output_filepath: Path
     ) -> None:
-        config = init_onyx()
         rows = []
-        with OnyxClient(config) as client:
+        with OnyxClient(onyx_config()) as client:
             for climb_id in samples:
                 climb_records = client.get(
                     project="synthscape",
@@ -90,8 +92,7 @@ class StrepPneumoPipeline(Pipeline):
             `True` when the pipeline should run, otherwise `False`.
         """
         # Get classifer calls info from onyx:
-        config = init_onyx()
-        with OnyxClient(config) as client:
+        with OnyxClient(onyx_config()) as client:
             climb_records = client.get(
                 project="synthscape",
                 climb_id=climb_id,
