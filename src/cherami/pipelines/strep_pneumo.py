@@ -90,6 +90,7 @@ class StrepPneumoPipeline(Pipeline):
             `True` when the pipeline should run, otherwise `False`.
         """
         # Get classifer calls info from onyx:
+        config = init_onyx()
         with OnyxClient(config) as client:
             climb_records = client.get(
                 project="synthscape",
