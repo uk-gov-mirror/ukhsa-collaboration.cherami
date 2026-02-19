@@ -2,6 +2,7 @@ import csv
 import logging
 from functools import cache
 from pathlib import Path
+
 from onyx import OnyxClient, OnyxConfig
 
 from cherami.config import PipelineConfig, WorkerConfig
@@ -11,12 +12,13 @@ from cherami.utils import init_onyx
 
 logger = logging.getLogger(__name__)
 
+
 @cache
 def onyx_config() -> OnyxConfig:
     return init_onyx()
 
-class StrepPneumoPipeline(Pipeline):
 
+class StrepPneumoPipeline(Pipeline):
     @property
     def proc_names(self) -> dict[str, list[int]]:
         """Optional mapping of Nextflow process names to their allowed exit codes.
@@ -79,7 +81,6 @@ class StrepPneumoPipeline(Pipeline):
             "Generated Strep pneumo samplesheet at %s",
             output_filepath,
         )
-
 
     def should_run(self, sample_id: str) -> bool:
         """Determine whether the Strep pneumo pipeline should run for the given sample.
