@@ -79,6 +79,39 @@ class StrepPneumoPipeline(Pipeline):
         )
 
 
+def should_run(self, climb_id: str) -> bool:
+    """Determine whether the Strep pneumo pipeline should run for the given sample.
+    When this returns False, the worker calls `on_skip()` instead of launching the pipeline.
+
+    Arguments:
+        sample_id: Identifier provided by the upstream system.
+
+    Returns:
+        `True` when the pipeline should run, otherwise `False`.
+    """
+    # Get classifer calls info from onyx:
+    with OnyxClient(config) as client:
+        climb_records = client.get(
+            project="synthscape",
+            climb_id=climb_id,
+            include=[
+                "classifier_calls__taxon_id",
+                "classifier_calls__count_descendants",
+            ],
+        )
+    # Set criteria for pipeline running - currently 100 reads of Strep pneumo
+    strep_finder = (
+        taxa_dict
+        for taxa_dict in climb_records["classifier_calls"]
+        if (taxa_dict.get("taxon_id") == 1313)
+        & (taxa_dict.get("count_descendants") >= 100)
+    )
+    # Iterate through list of dicts - return taxon_dict if taxon present, None if taxon not present
+    strep_present = next(strep_finder, None)
+
+    return bool(strep_present)
+
+
 def build_worker(
     worker_config: WorkerConfig,
     pipeline_config: PipelineConfig,
