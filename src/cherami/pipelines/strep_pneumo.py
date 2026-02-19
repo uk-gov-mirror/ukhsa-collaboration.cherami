@@ -23,9 +23,10 @@ class StrepPneumoPipeline(Pipeline):
             empty, every process must exit with code 0.
         """
         return {
-            "run_kractor": [0], # Placeholder - add allowed error codes/behaviour when implemented
-            "run_pneumokity": [0], # Placeholder - add allowed error codes/behaviour when implemented
-            "add_pneumokity_results_onyx": [0] # Placeholder - add allowed error codes/behaviour when implemented
+            # Placeholders - add additional allowed exit codes/behaviour when implemented
+            "run_kractor": [0],
+            "run_pneumokity": [0],
+            "add_pneumokity_results_onyx": [0],
         }
 
     def generate_samplesheet(
