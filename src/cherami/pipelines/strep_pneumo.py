@@ -103,11 +103,13 @@ class StrepPneumoPipeline(Pipeline):
                 ],
             )
         # Set criteria for pipeline running - currently 100 reads of Strep pneumo
+        strep_pneumo_taxon_id = 1313
+        min_descendant_reads = 100
         strep_finder = (
             taxa_dict
             for taxa_dict in climb_records["classifier_calls"]
-            if (taxa_dict.get("taxon_id") == 1313)
-            & (taxa_dict.get("count_descendants") >= 100)
+            if (taxa_dict.get("taxon_id") == strep_pneumo_taxon_id)
+            and (taxa_dict.get("count_descendants") >= min_descendant_reads)
         )
         # Iterate through list of dicts - return taxon_dict if taxon present, None if taxon not present
         strep_present = next(strep_finder, None)
