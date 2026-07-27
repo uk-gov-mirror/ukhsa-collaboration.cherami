@@ -13,7 +13,8 @@ The configuration file consists of three mandatory sections:
 {
   "global": {
     "work_dir": "",
-    "output_dir": ""
+    "output_dir": "",
+    "server": ""
   },
   "pipeline": { },
   "worker": { }
@@ -34,6 +35,7 @@ The configuration file consists of three mandatory sections:
 | --- | --- | --- |
 | `work_dir` | Yes | Root directory for all intermediate files and working directories. |
 | `output_dir` | Yes | Root directory for final published outputs and trace files. |
+| `server` | Yes | The name of the server where Onyx will be queried. |
 
 ## 3. Pipeline Fields
 
@@ -42,7 +44,7 @@ These settings configure the `Pipeline` object and the Kubernetes Jobs it spawns
 | Field | Required | Description |
 | --- | --- | --- |
 | `name` | Yes | The identifier for the characterisation pipeline. Used for module loading and Kubernetes Job naming. |
-| `version` | Yes | The version string of the pipeline logic. |
+| `version` | Yes | The version string of the pipeline logic. Should specify Git branch, tag, or commit for Nextflow to pull. |
 | `path` | Yes | File system path to the Nextflow pipeline project (typically a GitHub repository). |
 | `cpus` | Yes | Kubernetes CPU request for the job. |
 | `mem` | Yes | Kubernetes memory request (e.g., "8G"). |
@@ -54,7 +56,7 @@ These settings configure the `Pipeline` object and the Kubernetes Jobs it spawns
 | `namespace` | Yes | Kubernetes namespace where the Job will run. |
 | `container` | Yes | Container image used to execute the Nextflow head process. |
 | `backoff_limit` | Yes | Maximum number of pod restarts allowed before the Job is marked as failed. |
-| `max_retries` | Yes | Maximum number of times Cherami will retry a failed sample analysis. |
+| `max_attempts` | Yes | Total number of attempts Cherami will make for a failed sample analysis (must be at least 1). |
 | `retry_timeout` | Yes | Wait time (in seconds) between retries. |
 | `job_timeout` | Yes | Maximum execution time (in seconds) before the Job is timed out. |
 
@@ -79,7 +81,8 @@ Below is a minimal valid configuration. See `configs/cherami_amr.json` or `confi
 {
   "global": {
     "work_dir": "/path/to/work",
-    "output_dir": "/path/to/output"
+    "output_dir": "/path/to/output",
+    "server": "server"
   },
   "pipeline": {
     "name": "my-pipeline",
@@ -92,10 +95,10 @@ Below is a minimal valid configuration. See `configs/cherami_amr.json` or `confi
     "nf_config_path": "/path/to/nextflow.config",
     "nf_profiles": ["docker"],
     "nf_extra_args": [],
-    "namespace": "my-namespace",
+    "namespace": "my-server-namespace",
     "container": "quay.io/climb-tre/nextflow",
     "backoff_limit": 5,
-    "max_retries": 1,
+    "max_attempts": 2,
     "retry_timeout": 10,
     "job_timeout": 3600
   },

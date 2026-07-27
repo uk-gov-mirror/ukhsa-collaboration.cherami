@@ -7,7 +7,7 @@ from cherami.pipelines.pipeline import Pipeline
 
 
 class TestPipeline(Pipeline):
-    def generate_samplesheet(self, samples, job_id, output_filepath):
+    def generate_samplesheet(self, samples, job_id, output_filepath, context):
         pass
 
 
@@ -27,15 +27,15 @@ def pipeline_config():
         namespace="imafake-ns",
         container="nextflow/nextflow:latest",
         backoff_limit=3,
-        max_retries=2,
+        max_attempts=2,
         retry_timeout=300,
         job_timeout=3600,
     )
 
 
 @pytest.fixture
-def pipeline(pipeline_config):
-    return TestPipeline(pipeline_config)
+def pipeline(pipeline_config, global_config):
+    return TestPipeline(pipeline_config, global_config)
 
 
 @pytest.fixture
@@ -64,9 +64,10 @@ def test_create_job_manifest(pipeline, pipeline_config, job_dirs, monkeypatch):
     container = manifest["spec"]["template"]["spec"]["containers"][0]
     command = container["args"][2]
     expected_command = (
-        "nextflow run main.nf -c /idont/exist/nf.config -profile docker,test "
-        "--blah --outdir /idont/exist/output --samplesheet "
-        "/idont/exist/samplesheet.csv"
+        f"nextflow run main.nf -c {Path('/idont/exist/nf.config')} "
+        f"-profile docker,test -r 1.0.0 --blah "
+        f"--outdir {Path('/idont/exist/output')} --samplesheet "
+        f"{Path('/idont/exist/samplesheet.csv')}"
     )
 
     assert manifest["metadata"]["name"] == f"{pipeline_config.name}-JOB123"
