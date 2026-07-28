@@ -12,7 +12,13 @@ from cherami.utils import init_logging
 logger = logging.getLogger(__name__)
 
 
-@click.command(name="serve")
+@click.command(
+    name="serve",
+    help="""
+    Run cherami - this is the main access point, and will run indefinitely
+    until stopped.
+    """,
+)
 @click.option(
     "--audit_db",
     envvar="CHERAMI_AUDIT_DB",
@@ -45,7 +51,12 @@ def serve(
     worker.run()
 
 
-@click.command()
+@click.command(
+    name="describe",
+    help="""
+    Describe the exchange/queue set up for a pipeline in a human readable way.
+    """,
+)
 @click.argument(
     "config_path",
     type=click.Path(dir_okay=False, path_type=Path),
@@ -56,19 +67,17 @@ def describe(click_context: click.Context, config_path: Path) -> None:
     descriptions = []
 
     worker_config = config.worker_config
-    publish_queue_suffix = worker_config.publish_queue_suffix
-    publish_exchange = (
-        worker_config.publish_exchange or worker_config.listen_exchange
-        if publish_queue_suffix
-        else None
-    )
     descriptions.append(
         {
             "name": config.pipeline_config.name,
             "listen_exchange": worker_config.listen_exchange,
             "listen_queue": worker_config.listen_queue_suffix,
-            "publish_exchange": publish_exchange,
-            "publish_queue": publish_queue_suffix,
+            "publish_exchange": worker_config.publish_exchange,
+            "publish_queue": worker_config.publish_queue_suffix,
+            "rerun_exchange": worker_config.rerun_exchange,
+            "rerun_queue": worker_config.rerun_queue_suffix,
+            "priority_exchange": worker_config.priority_exchange,
+            "priority_queue": worker_config.priority_queue_suffix,
         }
     )
 
@@ -76,7 +85,13 @@ def describe(click_context: click.Context, config_path: Path) -> None:
     click.echo(json.dumps(json_payload, indent=2, sort_keys=False))
 
 
-@click.command(name="evaluate")
+@click.command(
+    name="evaluate",
+    help="""
+    Evaluate the should_run logic for a given pipeline. Requires access to Onyx
+    to function.
+    """,
+)
 @click.option(
     "--orange_box_version",
     required=True,
