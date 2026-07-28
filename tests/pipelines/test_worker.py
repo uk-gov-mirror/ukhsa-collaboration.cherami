@@ -3,10 +3,11 @@ import json
 from pathlib import Path
 
 import pytest
+from conftest import MockMessage
 
 from cherami.config import WorkerConfig
 from cherami.pipelines.pipeline import Pipeline
-from cherami.pipelines.worker import Worker
+from cherami.pipelines.worker import Worker, WorkerError
 
 
 @pytest.fixture
@@ -20,6 +21,10 @@ def mock_worker_config():
         varys_log_path=Path("/idont/exist/varys.log"),
         config_path=Path("/idont/exist/config.json"),
         config_hash="hash",
+        rerun_queue_suffix=None,
+        rerun_exchange=None,
+        priority_queue_suffix=None,
+        priority_exchange=None,
     )
 
 
@@ -42,16 +47,9 @@ def worker(mock_worker_config, mock_pipeline, tmp_path):
     )
 
 
-class MockMessage:
-    def __init__(self, body):
-        self.body = body
-
-
-def test_parse_message_valid(worker):
-    payload = {"climb_id": "C123ABC", "match_uuid": "JOB123", "test": "test2"}
-    message = MockMessage(body=json.dumps(payload))
+def test_parse_message_valid(worker, message):
     parsed_payload, climb_id, job_uuid = worker._parse_message(message)
-
+    payload = {"climb_id": "C123ABC", "match_uuid": "JOB123", "test": "test"}
     assert parsed_payload == payload
     assert climb_id == "C123ABC"
     assert job_uuid == "JOB123"
@@ -99,3 +97,14 @@ def test_create_result_with_timing(worker):
     assert result.duration == 5.5
     assert result.start_time == "1970-01-01T00:01:40+00:00"
     assert result.end_time == "1970-01-01T00:01:45.500000+00:00"
+
+
+def test_validate(worker):
+    worker.validate()
+
+
+def test_validate_raises(worker):
+    worker.listen_exchange = None
+    with pytest.raises(WorkerError) as we:
+        worker.validate()
+    assert "cannot consume messages" in str(we.value)

@@ -1,15 +1,13 @@
 import csv
-import json
 import logging
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import pytest
 
-from cherami.config import PipelineConfig
-from cherami.pipelines.orange_box import OrangeBoxPipeline
-
-PipelineConfig.version = "1.0.0"
+from cherami.config import PipelineConfig, WorkerConfig
+from cherami.pipelines.orange_box import OrangeBoxPipeline, OrangeBoxWorker
+from cherami.pipelines.worker import WorkerError
 
 
 @pytest.fixture
@@ -37,18 +35,6 @@ def orangebox_config():
 @pytest.fixture
 def orange_box_pipeline(orangebox_config, global_config):
     return OrangeBoxPipeline(orangebox_config, global_config)
-
-
-class MockMessage:
-    def __init__(self, body):
-        self.body = body
-
-
-@pytest.fixture
-def message():
-    payload = {"climb_id": "C123ABC", "match_uuid": "JOB123", "test": "test"}
-    test_message = MockMessage(body=json.dumps(payload))
-    return test_message
 
 
 def test_generate_samplesheet_success(
@@ -189,3 +175,138 @@ def test_should_run_multiple_analyses_one_match(
             mock_multiple_analyses.context
         )
         assert "Decision: not run." in caplog.text
+
+
+## Test the worker
+@pytest.fixture
+def orangebox_worker_config():
+    return WorkerConfig(
+        listen_exchange="test_listen_exchange",
+        listen_queue_suffix="test_listen_queue_suffix",
+        publish_queue_suffix="test_publish_queue_suffix",
+        publish_exchange="test_publish_exchange",
+        rerun_queue_suffix="test_rerun_queue_suffix",
+        rerun_exchange="test_rerun_exchange",
+        priority_queue_suffix="test_priority_queue_suffix",
+        priority_exchange="test_priority_exchange",
+        varys_config_path=Path("this/is/a/path"),
+        varys_log_path=Path("this/is/a/path"),
+        config_path=Path("/this/is/a/Path"),
+        config_hash="ABC123",
+    )
+
+
+@pytest.fixture
+def orange_box_worker(orangebox_worker_config, orange_box_pipeline, tmp_path):
+    return OrangeBoxWorker(
+        worker_config=orangebox_worker_config,
+        pipeline=orange_box_pipeline,
+        work_dir=tmp_path / "work",
+        output_dir=tmp_path / "output",
+        audit_db_path=tmp_path / "audit.db",
+    )
+
+
+@pytest.mark.parametrize(
+    ("sideeffect", "queue"),
+    [
+        (["message_2", "message", "message"], "priority"),
+        (["None", "message_2", "message"], "main"),
+        (["None", "None", "message_2"], "rerun"),
+        (["None", "None", "message_2"], ""),
+    ],
+)
+def test_orange_box_worker_get_message(
+    sideeffect, queue, orange_box_worker, caplog, request, message, message_2
+):
+    """Tests the four conditions of _get_messsage - message consumption from
+    priority, main and rerun queues or none."""
+    caplog.set_level(logging.INFO)
+    orange_box_worker._varys_client = Mock()
+    side_effects: list = [
+        request.getfixturevalue(x) if x != "None" else None for x in sideeffect
+    ]
+
+    # receive order is priority, main, rerun:
+    orange_box_worker._varys_client.receive.side_effect = side_effects
+
+    received_message = orange_box_worker.get_message()
+    if received_message:
+        assert queue in caplog.text
+        assert "C456DEF" in received_message.body
+    else:
+        assert not received_message
+
+
+def test_validate(orange_box_worker):
+    orange_box_worker.validate()
+
+
+@pytest.mark.parametrize(
+    ("exchange", "queue", "error", "msg"),
+    [
+        (None, None, True, "check worker config"),
+        ("test_publish_exchange", None, True, "check worker config"),
+        (None, "test_publish_queue_suffix", True, "check worker config"),
+        ("test_publish_exchange", "test_publish_queue_suffix", False, ""),
+    ],
+)
+def test_validate_publish(orange_box_worker, exchange, queue, error, msg):
+    orange_box_worker.publish_exchange = exchange
+    orange_box_worker.publish_queue_suffix = queue
+    if error:
+        with pytest.raises(WorkerError) as we:
+            orange_box_worker.validate()
+        assert msg in str(we.value)
+    else:
+        orange_box_worker.validate()
+
+
+@pytest.mark.parametrize(
+    ("exchange", "queue", "error", "msg"),
+    [
+        (None, None, "warn", "messages will NOT be consumed"),
+        ("test_priority_exchange", None, True, "check worker config"),
+        (None, "test_priority_queue_suffix", True, "check worker config"),
+        ("test_priority_exchange", "test_priority_queue_suffix", False, ""),
+    ],
+)
+def test_validate_priority(
+    orange_box_worker, exchange, queue, error, msg, caplog
+):
+    orange_box_worker.priority_exchange = exchange
+    orange_box_worker.priority_queue_suffix = queue
+    if error == "warn":
+        orange_box_worker.validate()
+        assert msg in caplog.text
+    elif error:
+        with pytest.raises(WorkerError) as we:
+            orange_box_worker.validate()
+        assert msg in str(we.value)
+    else:
+        orange_box_worker.validate()
+
+
+@pytest.mark.parametrize(
+    ("exchange", "queue", "error", "msg"),
+    [
+        (None, None, "warn", "messages will NOT be consumed"),
+        ("test_rerun_exchange", None, True, "check worker config"),
+        (None, "test_rerun_queue_suffix", True, "check worker config"),
+        ("test_rerun_exchange", "test_rerun_queue_suffix", False, ""),
+    ],
+)
+def test_validate_rerun(
+    orange_box_worker, exchange, queue, error, msg, caplog
+):
+    orange_box_worker.rerun_exchange = exchange
+    orange_box_worker.rerun_queue_suffix = queue
+    if error == "warn":
+        orange_box_worker.validate()
+        assert msg in caplog.text
+    elif error:
+        with pytest.raises(WorkerError) as we:
+            orange_box_worker.validate()
+        assert msg in str(we.value)
+    else:
+        orange_box_worker.validate()

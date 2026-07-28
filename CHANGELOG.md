@@ -1,9 +1,23 @@
 # Changelog
 
-## unreleased v26.8
+## unreleased v26.8 "Dutch Beauty"
 
 ## Added:
 * rich_click wraps around click for neatly formatted help. Version CLI arg updated.
+* `get_message` method to base worker class that by default only receives messages from the `listen` queue.
+* **breaking_change**: rerun queue and exchange to the worker config as optional.
+* **breaking_change**: priority queue and exchange to the worker config as optional.
+* Orange box `get_message` method overwritten to consume from priority and rerun queue.
+* Unit tests for the orange box `get_message`.
+* information to the docs to describe changes.
+* Changelog entry
+
+## Changed
+* some fixtures were moved to conftest and called from there for unit tests.
+
+## Security
+Default functionality it to consume from the listening queue, irrelevant if the rerun or priority queues are defined. This is to prevent arbitary queue creation. Users must define the message consumption logic in the worker.
+
 
 ---
 ---
