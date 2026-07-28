@@ -1,4 +1,12 @@
 # Changelog
+
+## unreleased v26.8
+
+## Added:
+* rich_click wraps around click for neatly formatted help. Version CLI arg updated.
+
+---
+---
 ## v26.07.0 "Racing Homer"
 
 ### Added
