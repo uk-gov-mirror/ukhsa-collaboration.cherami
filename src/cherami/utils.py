@@ -10,6 +10,23 @@ from onyx import OnyxConfig, OnyxEnv
 from varys import Varys
 
 
+class WorkerStopping(RuntimeError):  # noqa: N818
+    """Error Occurs in worker and worker cannot complete."""
+
+
+class RetryableWorkerError(RuntimeError):
+    """Error occurs in Worker but error likely intermittent, and therefore
+    eligible for retry"""
+
+
+class RetryablePipelineError(RuntimeError):
+    """Pipeline error eligible for retry."""
+
+
+class NonRetryablePipelineError(RuntimeError):
+    """Pipeline error not eligible for retry."""
+
+
 def init_logging(log_path: Path | None, log_level: str) -> None:
     logger = logging.getLogger("cherami")
     logger.setLevel(log_level)
@@ -92,7 +109,7 @@ def init_kubernetes() -> BatchV1Api:
         c.api_key["authorization"] = token
         c.api_key_prefix["authorization"] = "Bearer"
         c.host = f"https://{os.getenv('KUBERNETES_SERVICE_HOST')}"
-        c.ssl_ca_cert = "/run/secrets/kubernetes.io/serviceaccount/ca.crt"  # type: ignore
+        c.ssl_ca_cert = "/run/secrets/kubernetes.io/serviceaccount/ca.crt"
 
         Configuration.set_default(c)
         api_instance = BatchV1Api()

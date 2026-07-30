@@ -10,16 +10,9 @@ from onyx.exceptions import OnyxConnectionError
 
 from cherami.pipelines import Pipeline
 from cherami.pipelines.pipeline import PipelineContext
+from cherami.utils import NonRetryablePipelineError, RetryablePipelineError
 
 logger = logging.getLogger(__name__)
-
-
-class RetryablePipelineError(RuntimeError):
-    """Pipeline error eligible for retry."""
-
-
-class NonRetryablePipelineError(RuntimeError):
-    """Pipeline error not eligible for retry."""
 
 
 class PipelineRunner:
