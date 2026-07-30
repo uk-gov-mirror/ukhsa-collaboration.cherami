@@ -8,20 +8,19 @@ from typing import Any
 
 from cherami.audit_db import AuditDB
 from cherami.config import WorkerConfig, hash_from_file
-from cherami.pipeline_runner import (
-    NonRetryablePipelineError,
-    PipelineRunner,
-    RetryablePipelineError,
-)
+from cherami.pipeline_runner import PipelineRunner
 from cherami.pipelines import Pipeline
 from cherami.pipelines.pipeline import PipelineContext
-from cherami.utils import init_kubernetes, init_varys
+from cherami.utils import (
+    NonRetryablePipelineError,
+    RetryablePipelineError,
+    RetryableWorkerError,
+    WorkerStopping,
+    init_kubernetes,
+    init_varys,
+)
 
 logger = logging.getLogger(__name__)
-
-
-class WorkerError(Exception):
-    """Error Occurs in worker."""
 
 
 @dataclass
@@ -243,11 +242,11 @@ class Worker:
 
         else:
             if reason == "retries_exhaused":
-                raise RuntimeError("Pipeline retries exhausted") from error
+                raise WorkerStopping("Pipeline retries exhausted") from error
             elif reason == "non-retryable":
-                raise RuntimeError("Non-retryable pipeline error") from error
+                raise WorkerStopping("Non-retryable pipeline error") from error
             else:
-                raise RuntimeError(
+                raise WorkerStopping(
                     "Pipeline failed for unknown reason."
                 ) from error
 
@@ -352,7 +351,7 @@ class Worker:
         """
         # Listen exchange and queue cannot be None
         if not self.listen_exchange or not self.listen_queue_suffix:
-            raise WorkerError(
+            raise WorkerStopping(
                 "Listen exchange and/or queue suffic has not been set, "
                 "cannot consume messages."
             )
@@ -361,7 +360,7 @@ class Worker:
         if not bool(self.dead_sample_exchange) == bool(
             self.dead_sample_queue_suffix
         ):
-            raise WorkerError(
+            raise WorkerStopping(
                 "If using dead sample handling, BOTH dead_sample_exchange AND "
                 "dead_sample_queue_suffix have to be configured. Check config."
             )
@@ -451,6 +450,9 @@ class Worker:
         # If max_attempts is exhausted, call `on_sample_failure` to send to
         # dead sample exchange (if configured) and ack, else raise error.
 
+        # NOTES - pull apart worker retry and pipeline retry. Currently onyx time outs will block a
+        # message infinitely.
+
         try:
             while True:
                 try:  # exceptions for Runtime error or generic Exception
@@ -475,7 +477,9 @@ class Worker:
                     )
 
                     # Decision time - run the pipeline?
-                    if not pipeline.should_run(upstream_context):
+                    should_run = pipeline.should_run(upstream_context)
+
+                    if not should_run:
                         # Skipping
                         logger.info(
                             "Criteria not met for sample %s; acknowledging "
@@ -648,6 +652,22 @@ class Worker:
 
                     self.on_success(message, upstream_context)
 
+                except RetryableWorkerError:
+                    # nack message
+                    time.sleep(10)
+                    continue
+                except WorkerStopping as workerstopping:
+                    logger.error("Cannot process sample - Dead lettering.")
+                    self.on_sample_failure(
+                        message=message,
+                        context=upstream_context,
+                        reason="non-retryable",
+                        error=workerstopping,
+                        start_time=start_time,
+                        end_time=end_time,
+                        current_attempt=current_attempt,  # check this
+                        max_attempts=total_attempts,  # check this
+                    )
                 except RuntimeError:
                     logger.error("Worker stopping due to pipeline failure")
                     raise

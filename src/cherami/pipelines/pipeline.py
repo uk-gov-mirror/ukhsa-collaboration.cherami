@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from cherami.config import GlobalConfig, PipelineConfig
+from cherami.utils import RetryableWorkerError, WorkerStopping
 
 logger = logging.getLogger(__name__)
 
@@ -99,7 +100,7 @@ class PipelineContext:
                 "Cannot query Onyx for upstream context, see previous "
                 "logs for reason."
             )
-            raise RuntimeError(
+            raise RetryableWorkerError(
                 "Onyx cannot be queried for upstream context - check logs."
             )
 
@@ -460,8 +461,11 @@ class PathCharPipeline(Pipeline):
         context with the payload, if these do not match, exit.
 
         Raises:
-            RuntimeError: the upstream context cherami sent does not match the
-            current onyx state.
+            RetryableWorkerError: If Onyx cannot be reached
+            WorkerStopping: the upstream context cherami sent does not match the
+                current onyx state.
+            ValueError: cannot get orange box version and Onyx Hash from
+                payload.
         """
         # Populate the context object
         context: PipelineContext = super().build_context(payload)
@@ -480,36 +484,17 @@ class PathCharPipeline(Pipeline):
                     context.onyx_versions_hash,
                     payload["onyx_versions_hash"],
                 )
-                raise RuntimeError(
+                raise WorkerStopping(
                     "Current onyx state does not match the upstream "
                     "context of the cherami state. Cannot proceed."
                 )
             context.orange_box_version = payload["orange_box_version"]
         except KeyError as k:
-            # Changing this to debug whilst messages on queue do not contain upstream context
-
-            # raise ValueError(
-            #     "%s not available in the message payload, "
-            #     "cannot decipher upstream context.",
-            #     k,
-            # ) from k
-            logger.debug(
+            raise ValueError(
                 "%s not available in the message payload, "
-                "cannot decipher upstream context. Continuing anyway, might cause "
-                "duplicated records.",
+                "cannot decipher upstream context.",
                 k,
-            )
-            # Have to set this to empty to they exist and can be compared in should_run
-            context.orange_box_version = (
-                ""
-                if not context.orange_box_version
-                else context.orange_box_version
-            )
-            context.onyx_versions_hash = (
-                ""
-                if not context.onyx_versions_hash
-                else context.onyx_versions_hash
-            )
+            ) from k
 
         return context
 
@@ -540,7 +525,7 @@ class PathCharPipeline(Pipeline):
             versions hash and the message payload from upstream.
 
         Raises:
-            RuntimeError: Onyx cannot be queried for the analysis tables.
+            RetryableWorkerError: Onyx cannot be queried for the analysis tables.
 
         Returns:
             bool: true or false for should_run.
@@ -568,7 +553,9 @@ class PathCharPipeline(Pipeline):
                 "Cannot query Onyx for analyses for sample %s.",
                 context.climb_id,
             )
-            raise RuntimeError("Cannot query onyx - check logs for reasons.")
+            raise RetryableWorkerError(
+                "Cannot query onyx - check logs for reasons."
+            )
 
         # 2) Get the analysis tables associated with the pipeline:
         pipeline_analysis_tables = {
@@ -577,10 +564,11 @@ class PathCharPipeline(Pipeline):
             if table["pipeline_name"] == self.config.name
         }
 
-        # If there are no analysis tables, just run:
+        # If there are no analysis tables, Decision is to just run:
         if not pipeline_analysis_tables:
             logger.debug(
-                "Inbound sample %s has no analysis tables for pipeline %s.",
+                "Inbound sample %s has no analysis tables for pipeline %s. "
+                "Decision: run",
                 context.climb_id,
                 self.config.name,
             )
@@ -599,7 +587,8 @@ class PathCharPipeline(Pipeline):
             except KeyError:
                 # If get a table without onyx_versions_hash or
                 # orange_box_version, just ignore and check the next table.
-
+                # If no tables have valid hash or ob version, the
+                # upstream_contexts just remains empty.
                 continue
 
             upstream_contexts.add(
