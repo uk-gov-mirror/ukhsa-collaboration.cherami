@@ -1,31 +1,11 @@
 import datetime as dt
 import json
-from pathlib import Path
 
 import pytest
 from conftest import MockMessage
 
-from cherami.config import WorkerConfig
 from cherami.pipelines.pipeline import Pipeline
 from cherami.pipelines.worker import Worker, WorkerError
-
-
-@pytest.fixture
-def mock_worker_config():
-    return WorkerConfig(
-        listen_exchange="test-exchange",
-        listen_queue_suffix="queue",
-        publish_queue_suffix="test",
-        publish_exchange="out-exchange",
-        varys_config_path=Path("/idont/exist/varys.conf"),
-        varys_log_path=Path("/idont/exist/varys.log"),
-        config_path=Path("/idont/exist/config.json"),
-        config_hash="hash",
-        rerun_queue_suffix=None,
-        rerun_exchange=None,
-        priority_queue_suffix=None,
-        priority_exchange=None,
-    )
 
 
 @pytest.fixture
@@ -37,9 +17,9 @@ def mock_pipeline(mocker):
 
 
 @pytest.fixture
-def worker(mock_worker_config, mock_pipeline, tmp_path):
+def worker(mock_complete_worker_config, mock_pipeline, tmp_path):
     return Worker(
-        worker_config=mock_worker_config,
+        worker_config=mock_complete_worker_config,
         pipeline=mock_pipeline,
         work_dir=tmp_path / "work",
         output_dir=tmp_path / "output",
@@ -103,8 +83,15 @@ def test_validate(worker):
     worker.validate()
 
 
-def test_validate_raises(worker):
+def test_validate_raises_listen(worker):
     worker.listen_exchange = None
     with pytest.raises(WorkerError) as we:
         worker.validate()
     assert "cannot consume messages" in str(we.value)
+
+
+def test_validate_raises_dead_sample(worker):
+    worker.dead_sample_exchange = None
+    with pytest.raises(WorkerError) as we:
+        worker.validate()
+    assert "Check config" in str(we.value)
