@@ -7,7 +7,7 @@ import pytest
 
 from cherami.config import PipelineConfig
 from cherami.pipelines.orange_box import OrangeBoxPipeline, OrangeBoxWorker
-from cherami.pipelines.worker import WorkerError
+from cherami.utils import WorkerStopping
 
 
 @pytest.fixture
@@ -238,7 +238,7 @@ def test_validate_publish(orange_box_worker, exchange, queue, error, msg):
     orange_box_worker.publish_exchange = exchange
     orange_box_worker.publish_queue_suffix = queue
     if error:
-        with pytest.raises(WorkerError) as we:
+        with pytest.raises(WorkerStopping) as we:
             orange_box_worker.validate()
         assert msg in str(we.value)
     else:
@@ -263,7 +263,7 @@ def test_validate_priority(
         orange_box_worker.validate()
         assert msg in caplog.text
     elif error:
-        with pytest.raises(WorkerError) as we:
+        with pytest.raises(WorkerStopping) as we:
             orange_box_worker.validate()
         assert msg in str(we.value)
     else:
@@ -288,7 +288,7 @@ def test_validate_rerun(
         orange_box_worker.validate()
         assert msg in caplog.text
     elif error:
-        with pytest.raises(WorkerError) as we:
+        with pytest.raises(WorkerStopping) as we:
             orange_box_worker.validate()
         assert msg in str(we.value)
     else:

@@ -5,7 +5,7 @@ import pytest
 from conftest import MockMessage
 
 from cherami.pipelines.pipeline import Pipeline
-from cherami.pipelines.worker import Worker, WorkerError
+from cherami.pipelines.worker import Worker, WorkerStopping
 
 
 @pytest.fixture
@@ -85,13 +85,13 @@ def test_validate(worker):
 
 def test_validate_raises_listen(worker):
     worker.listen_exchange = None
-    with pytest.raises(WorkerError) as we:
+    with pytest.raises(WorkerStopping) as we:
         worker.validate()
     assert "cannot consume messages" in str(we.value)
 
 
 def test_validate_raises_dead_sample(worker):
     worker.dead_sample_exchange = None
-    with pytest.raises(WorkerError) as we:
+    with pytest.raises(WorkerStopping) as we:
         worker.validate()
     assert "Check config" in str(we.value)
