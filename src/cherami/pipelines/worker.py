@@ -229,7 +229,8 @@ class Worker:
         new_payload["max_attempts"] = max_attempts
         new_payload["attemps"] = current_attempt
 
-        if self.dead_sample_queue_suffix:
+        # Note - both exchange and queue should be set, checked in validate.
+        if self.dead_sample_exchange:
             self._varys_client.send(
                 message=context.payload,
                 exchange=self.dead_sample_exchange,
@@ -393,15 +394,23 @@ class Worker:
                 initialisation failure.
             ValueError: If an incoming message cannot be parsed.
             Exception: If an unexpected error occurs and the worker exits.
-            WorkerError: if the queues are not set up adequately.
+            WorkerError: if the validate fails and queues are not set up
+                adequately.
         """
-        self.validate()
+        # Start up
         logger.info("Serving worker: %s", self.pipeline.config.name)
+
+        logger.info("Validating...")
+        self.validate()
+
+        # init varys
         self._varys_client = init_varys(
             self.varys_config_path,
             self.varys_log_path,
             "cherami",
-            routing_key=self.pipeline.config.name,
+            routing_key=self.pipeline.config.name
+            if self.dead_sample_exchange
+            else "arbitary_string",  # this is Varys default
         )
         logger.info(
             "Worker listening on main exchange %s queue %s ",
@@ -426,23 +435,33 @@ class Worker:
         audit_db = self._audit_db
         pipeline = self.pipeline
         message = None
+
+        # The basic flow of a worker is first check first for any messages -
+        # listening to varys is blocking. If there are no messages after the
+        # timeout, poll again and wait. If there is a message, parse it to get
+        # sample_id and uuid and call the `should_run` method on the pipeline
+        # to see if passess decision logic.
+        # If it does not pass, call `on_skip`.
+        # If it does pass, call `run_pipeline` on the `PipelineRunner` instance
+        # to then launch the pipeline. Exceptions indicate failure states.
+        # If pipeline runner is a success, call `on_success` to ack and
+        # potentially publish to next queue (if configured as such).
+        # If failure, it will be retried up to `max_attempts`, calling
+        # `on_retry` to nack the message so it goes back to the queue.
+        # If max_attempts is exhausted, call `on_sample_failure` to send to
+        # dead sample exchange (if configured) and ack, else raise error.
+
         try:
             while True:
-                ## the basic flow  of a worker is first check first for any messages - listening to varys is blocking.
-                ## If there are no messages after the timeout, poll again and wait. If there is a message, parse it to
-                ## get sample_id and uuid and call the `should_run` method on the pipeline to see if passess decision
-                ## logic. If it does not pass, call `on_skip` to ack and move to next sample. If it does pass, call
-                ## `run_pipeline` on the `PipelineRunner` instance to then launch the pipeline. Exceptions indicate
-                ## failure states. If success, call `on_success` to ack and potentially publish to next queue. If
-                ## failure, it will be retried up to `max_attempts`, calling `on_retry` to nack the message so
-                ## it goes back to the queue. If max_attempts is exhausted, call `on_sample_failure` to ack and handle
-                # the error to move on.
-                try:
+                try:  # exceptions for Runtime error or generic Exception
                     message = self.get_message()
+
+                    # Poll for a message:
                     if not message:
                         time.sleep(10)
                         continue
 
+                    # Got a message! Parse it:
                     payload, climb_id, job_uuid = self._parse_message(message)
                     logger.info(
                         "Received message climb id: %s uuid: %s",
@@ -450,12 +469,14 @@ class Worker:
                         job_uuid,
                     )
 
-                    # Once we have the message, get the upstream onyx context:
+                    # get the upstream onyx context for this sample:
                     upstream_context: PipelineContext = pipeline.build_context(
                         payload=payload
                     )
 
+                    # Decision time - run the pipeline?
                     if not pipeline.should_run(upstream_context):
+                        # Skipping
                         logger.info(
                             "Criteria not met for sample %s; acknowledging "
                             "message.",
@@ -470,6 +491,7 @@ class Worker:
                         self.on_skip(message, upstream_context)
                         continue
 
+                    # Run the Pipeline - setup
                     current_config_hash = hash_from_file(self._config_path)
                     if current_config_hash != self._startup_config_hash:
                         logger.warning(
@@ -491,6 +513,7 @@ class Worker:
                         datetime.UTC
                     )
 
+                    # Run the Pipeline
                     try:
                         self._runner.run_pipeline(
                             pipeline=pipeline,
@@ -501,10 +524,14 @@ class Worker:
                             execution_timestamp=start_time,
                             context=upstream_context,
                         )
+
+                    # It failed but can retry:
                     except RetryablePipelineError as e:
                         end_time = datetime.datetime.now(datetime.UTC)
                         error_message = str(e)
+
                         if current_attempt >= total_attempts:
+                            # Attempts have been exhausted
                             self._retry_counts.pop(climb_id, None)
                             # Create the result to be logged in the audit db
                             result = self._create_result(
@@ -541,6 +568,7 @@ class Worker:
                                 max_attempts=total_attempts,
                             )
 
+                        # Attempt again
                         next_attempt = current_attempt + 1
                         logger.warning(
                             "Retrying pipeline %s for sample %s job %s "
@@ -552,7 +580,7 @@ class Worker:
                             total_attempts,
                             error_message,
                         )
-                        result = self._create_result(
+                        result: PipelineResult = self._create_result(
                             climb_id=climb_id,
                             job_uuid=job_uuid,
                             status="RETRY",
@@ -565,10 +593,12 @@ class Worker:
                         audit_db.add_record(result)
                         self.on_retry(message)
                         continue
+
+                    # Failed in non-retryable way
                     except NonRetryablePipelineError as e:
                         end_time = datetime.datetime.now(datetime.UTC)
                         self._retry_counts.pop(climb_id, None)
-                        result = self._create_result(
+                        result: PipelineResult = self._create_result(
                             climb_id=climb_id,
                             job_uuid=job_uuid,
                             status="FAILED",
@@ -602,9 +632,10 @@ class Worker:
                             max_attempts=total_attempts,
                         )
 
+                    # Pipeline completed successfully
                     end_time = datetime.datetime.now(datetime.UTC)
                     self._retry_counts.pop(climb_id, None)
-                    result = self._create_result(
+                    result: PipelineResult = self._create_result(
                         climb_id=climb_id,
                         job_uuid=job_uuid,
                         status="SUCCESS",
@@ -614,10 +645,9 @@ class Worker:
                         end_time=end_time,
                     )
                     audit_db.add_record(result)
-                    ## TODO: decide when to actually mark as success - if something fails after the pipeline run but before here,
-                    ## then the sample will be retried even though the pipeline itself succeeded and possibly duplicate analysis tables etc
-                    ## can we have a check we can add to should_run to see if a characterisation pipeline has already run for this sample
+
                     self.on_success(message, upstream_context)
+
                 except RuntimeError:
                     logger.error("Worker stopping due to pipeline failure")
                     raise
