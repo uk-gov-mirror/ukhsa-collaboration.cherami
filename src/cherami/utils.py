@@ -35,7 +35,12 @@ def init_logging(log_path: Path | None, log_level: str) -> None:
     logger.addHandler(handler)
 
 
-def init_varys(config_path: Path, log_path: Path, profile: str) -> Varys:
+def init_varys(
+    config_path: Path,
+    log_path: Path,
+    profile: str,
+    routing_key: str = "arbitrary_string",
+) -> Varys:
     """Initialise a Varys client for RabbitMQ.
 
     Returns a Varys client configured to use the requested profile from the config file.
@@ -46,6 +51,7 @@ def init_varys(config_path: Path, log_path: Path, profile: str) -> Varys:
         config_path: Path to Varys config containing RabbitMQ credentials and connection details.
         log_path: Path where Varys should write its logs.
         profile: Varys profile name to use from the config file.
+        routing_key: Key to bind queue to exchange (Not used for fanout exchanges).
 
     Returns:
         Configured Varys client ready to send and receive RMQ messages.
@@ -59,6 +65,7 @@ def init_varys(config_path: Path, log_path: Path, profile: str) -> Varys:
             logfile=str(log_path),
             log_level="DEBUG",
             config_path=str(config_path),
+            routing_key=routing_key,
             auto_acknowledge=False,
         )
     except Exception as e:
