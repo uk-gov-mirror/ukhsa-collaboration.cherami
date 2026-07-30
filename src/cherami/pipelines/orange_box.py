@@ -9,7 +9,8 @@ from cherami.pipelines.pipeline import (
     PipelineContext,
     get_context_from_record,
 )
-from cherami.pipelines.worker import Worker, WorkerError
+from cherami.pipelines.worker import Worker
+from cherami.utils import WorkerStopping
 
 logger = logging.getLogger(__name__)
 
@@ -173,14 +174,14 @@ class OrangeBoxWorker(Worker):
         Acts as safety net check rather than user friendly descriptive UI.
 
         Raises:
-            WorkerError - if any required checks fail.
+            WorkerStopping - if any required checks fail.
         """
         # Listen
         super().validate()
 
         # Publish
         if not self.publish_exchange or not self.publish_queue_suffix:
-            raise WorkerError(
+            raise WorkerStopping(
                 "Orange box worker expects publish exchange and publish "
                 "queue suffix set - check worker config."
             )
@@ -192,7 +193,7 @@ class OrangeBoxWorker(Worker):
                 "messages will NOT be consumed."
             )
         if bool(self.priority_exchange) != bool(self.priority_queue_suffix):
-            raise WorkerError(
+            raise WorkerStopping(
                 "For priority queue consumption, both the priority exchange "
                 "AND priority queue suffix must be set, check worker config. "
             )
@@ -204,7 +205,7 @@ class OrangeBoxWorker(Worker):
                 "messages will NOT be consumed."
             )
         if bool(self.rerun_exchange) != bool(self.rerun_queue_suffix):
-            raise WorkerError(
+            raise WorkerStopping(
                 "For rerun queue consumption, both the rerun exchange "
                 "AND rerun queue suffix must be set, check worker config. "
             )
