@@ -5,7 +5,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-from cherami.config import PipelineConfig, WorkerConfig
+from cherami.config import PipelineConfig
 from cherami.pipelines.orange_box import OrangeBoxPipeline, OrangeBoxWorker
 from cherami.pipelines.worker import WorkerError
 
@@ -177,29 +177,12 @@ def test_should_run_multiple_analyses_one_match(
         assert "Decision: not run." in caplog.text
 
 
-## Test the worker
 @pytest.fixture
-def orangebox_worker_config():
-    return WorkerConfig(
-        listen_exchange="test_listen_exchange",
-        listen_queue_suffix="test_listen_queue_suffix",
-        publish_queue_suffix="test_publish_queue_suffix",
-        publish_exchange="test_publish_exchange",
-        rerun_queue_suffix="test_rerun_queue_suffix",
-        rerun_exchange="test_rerun_exchange",
-        priority_queue_suffix="test_priority_queue_suffix",
-        priority_exchange="test_priority_exchange",
-        varys_config_path=Path("this/is/a/path"),
-        varys_log_path=Path("this/is/a/path"),
-        config_path=Path("/this/is/a/Path"),
-        config_hash="ABC123",
-    )
-
-
-@pytest.fixture
-def orange_box_worker(orangebox_worker_config, orange_box_pipeline, tmp_path):
+def orange_box_worker(
+    mock_complete_worker_config, orange_box_pipeline, tmp_path
+):
     return OrangeBoxWorker(
-        worker_config=orangebox_worker_config,
+        worker_config=mock_complete_worker_config,
         pipeline=orange_box_pipeline,
         work_dir=tmp_path / "work",
         output_dir=tmp_path / "output",
@@ -217,7 +200,7 @@ def orange_box_worker(orangebox_worker_config, orange_box_pipeline, tmp_path):
     ],
 )
 def test_orange_box_worker_get_message(
-    sideeffect, queue, orange_box_worker, caplog, request, message, message_2
+    sideeffect, queue, orange_box_worker, caplog, request
 ):
     """Tests the four conditions of _get_messsage - message consumption from
     priority, main and rerun queues or none."""

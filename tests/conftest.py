@@ -1,9 +1,11 @@
 import json
 import os
 from dataclasses import dataclass
+from pathlib import Path
 
 import pytest
 
+from cherami.config import WorkerConfig
 from cherami.pipelines.pipeline import PipelineContext
 
 os.environ["ONYX_DOMAIN"] = "Placeholder domain"
@@ -41,6 +43,46 @@ class MockGlobalConfig:
 @pytest.fixture
 def global_config():
     return MockGlobalConfig()
+
+
+@pytest.fixture
+def mock_skeletal_worker_config():
+    return WorkerConfig(
+        listen_exchange="test-exchange",
+        listen_queue_suffix="queue",
+        publish_queue_suffix="test",
+        publish_exchange="out-exchange",
+        varys_config_path=Path("/idont/exist/varys.conf"),
+        varys_log_path=Path("/idont/exist/varys.log"),
+        config_path=Path("/idont/exist/config.json"),
+        config_hash="hash",
+        rerun_queue_suffix=None,
+        rerun_exchange=None,
+        priority_queue_suffix=None,
+        priority_exchange=None,
+        dead_sample_queue_suffix=None,
+        dead_sample_exchange=None,
+    )
+
+
+@pytest.fixture
+def mock_complete_worker_config():
+    return WorkerConfig(
+        listen_exchange="test_listen_exchange",
+        listen_queue_suffix="test_listen_queue_suffix",
+        publish_queue_suffix="test_publish_queue_suffix",
+        publish_exchange="test_publish_exchange",
+        rerun_queue_suffix="test_rerun_queue_suffix",
+        rerun_exchange="test_rerun_exchange",
+        dead_sample_queue_suffix="test_dead_sample_queue_suffix",
+        dead_sample_exchange="test_dead_sample_exchange",
+        priority_queue_suffix="test_priority_queue_suffix",
+        priority_exchange="test_priority_exchange",
+        varys_config_path=Path("this/is/a/path"),
+        varys_log_path=Path("this/is/a/path"),
+        config_path=Path("/this/is/a/Path"),
+        config_hash="ABC123",
+    )
 
 
 @dataclass

@@ -54,6 +54,8 @@ def valid_worker():
         "rerun_exchange": "rerun_exchange",
         "priority_queue_suffix": "priority_queue",
         "priority_exchange": "priority_exchange",
+        "dead_sample_queue_suffix": "dead_sample_queue",
+        "dead_sample_exchange": "dead_sample_exchange",
         "varys_config_path": "/idont/exist/varys.json",
         "varys_log_path": "/idont/exist/varys.log",
     }
@@ -100,9 +102,12 @@ def test_worker_config_success(valid_worker):
     assert config.listen_exchange == "cherami-exchange"
     assert config.publish_queue_suffix == "publish"
     assert config.varys_config_path == Path("/idont/exist/varys.json")
+    assert config.dead_sample_exchange == "dead_sample_exchange"
 
 
-@pytest.mark.parametrize("queue", ["publish", "rerun", "priority"])
+@pytest.mark.parametrize(
+    "queue", ["publish", "rerun", "priority", "dead_sample"]
+)
 def test_worker_config_allow_none_optionals(valid_worker, queue):
     """Any of publish, rerun or priority queue suffix and exchange can be
     None"""
