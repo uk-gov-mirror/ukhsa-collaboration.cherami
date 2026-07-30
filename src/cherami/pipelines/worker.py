@@ -71,6 +71,8 @@ class Worker:
             not used to push messages to).
         priority_queue_suffix: Optional queue suffix for priority queue.
         priority_exchange: Optional exchange name for the priority messages.
+        dead_sample_queue_suffix: queue for failing samples to be routed to.
+        dead_sample_exchange: Exchange to send failing samples to.
         _config_path: Path to the worker configuration file.
         _startup_config_hash: Hash of the configuration at startup.
     """
@@ -104,6 +106,12 @@ class Worker:
         self.priority_exchange: str | None = worker_config.priority_exchange
         self.priority_queue_suffix: str | None = (
             worker_config.priority_queue_suffix
+        )
+        self.dead_sample_exchange: str | None = (
+            worker_config.dead_sample_exchange
+        )
+        self.dead_sample_queue_suffix: str | None = (
+            worker_config.dead_sample_queue_suffix
         )
         self._config_path: Path = worker_config.config_path
         self._startup_config_hash: str = worker_config.config_hash
@@ -183,22 +191,64 @@ class Worker:
     def on_sample_failure(
         self,
         message: Any,
+        context: PipelineContext,
+        reason: str,
+        error: RetryablePipelineError | NonRetryablePipelineError | Exception,
+        start_time: datetime.datetime,
+        end_time: datetime.datetime,
+        current_attempt: int,
+        max_attempts: int,
     ) -> None:
-        """Handle permanent pipeline failures.
+        """Handle permanent pipeline failures for samples by either sending
+        message to dead sample queue if configured OR raising errors.
 
         Invoked when a sample fails and is not eligible for retry (or has
-        exhausted all retry attempts). This method has no default
-        implementation.
-
-        Override this method to handle terminal failures, such as sending the
-        message to a dead-letter queue, logging a detailed error report, or
-        alerting an administrator.
+        exhausted all retry attempts). IF the dead sample exchange is
+        configured, a new message is published to the 'dead sample exchange',
+        which will route the message to the pipeline specific queue using the
+        routing key (set in the varys_client object).
 
         Args:
             message: The Varys message object associated with the current
                 sample.
+            context: PipelineContext object.
+            reason: Reason for failure. If dead sample queue defined, this gets
+                added to the payload, else informs the error raised. Should be
+                either 'retries_exhausted' or 'non-retryable, anything else
+                raises generic RuntimeError.
+            Raises:
+                RuntimeError: if Dead sample queue not configured, errors are
+                    raised.
         """
-        ## TODO: consider publishing to an error queue if configured
+        new_payload = context.payload
+        new_payload["start_time"] = start_time
+        new_payload["end_time"] = end_time
+        new_payload["pipeline_name"] = self.pipeline.config.name
+        new_payload["failure_type"] = reason
+        new_payload["error_message"] = str(error)
+        new_payload["max_attempts"] = max_attempts
+        new_payload["attemps"] = current_attempt
+
+        if self.dead_sample_queue_suffix:
+            self._varys_client.send(
+                message=context.payload,
+                exchange=self.dead_sample_exchange,
+                queue_suffix=self.dead_sample_queue_suffix,
+                exchange_type="direct",
+                max_attempts=3,
+            )
+            # Only acknowledge if dead sample queue defined
+            self._varys_client.acknowledge_message(message)
+
+        else:
+            if reason == "retries_exhaused":
+                raise RuntimeError("Pipeline retries exhausted") from error
+            elif reason == "non-retryable":
+                raise RuntimeError("Non-retryable pipeline error") from error
+            else:
+                raise RuntimeError(
+                    "Pipeline failed for unknown reason."
+                ) from error
 
     def _parse_message(
         self,
@@ -294,14 +344,25 @@ class Worker:
         """
         Pre-flight checks for the worker config.
 
+        Listening exchange AND queue must be set.
+
         Raises:
             WorkerException - if any checks fail
         """
-        # Publish exchange and queue cannot be None
+        # Listen exchange and queue cannot be None
         if not self.listen_exchange or not self.listen_queue_suffix:
             raise WorkerError(
                 "Listen exchange and/or queue suffic has not been set, "
                 "cannot consume messages."
+            )
+
+        # check if dead-sample exchange set, that is is named suitably
+        if not bool(self.dead_sample_exchange) == bool(
+            self.dead_sample_queue_suffix
+        ):
+            raise WorkerError(
+                "If using dead sample handling, BOTH dead_sample_exchange AND "
+                "dead_sample_queue_suffix have to be configured. Check config."
             )
 
     def get_message(self) -> Any | None:
@@ -340,6 +401,7 @@ class Worker:
             self.varys_config_path,
             self.varys_log_path,
             "cherami",
+            routing_key=self.pipeline.config.name,
         )
         logger.info(
             "Worker listening on main exchange %s queue %s ",
@@ -378,7 +440,7 @@ class Worker:
                 try:
                     message = self.get_message()
                     if not message:
-                        time.sleep(5)
+                        time.sleep(10)
                         continue
 
                     payload, climb_id, job_uuid = self._parse_message(message)
@@ -444,6 +506,7 @@ class Worker:
                         error_message = str(e)
                         if current_attempt >= total_attempts:
                             self._retry_counts.pop(climb_id, None)
+                            # Create the result to be logged in the audit db
                             result = self._create_result(
                                 climb_id=climb_id,
                                 job_uuid=job_uuid,
@@ -455,6 +518,7 @@ class Worker:
                                 end_time=end_time,
                             )
                             audit_db.add_record(result)
+                            # Write error to log
                             logger.error(
                                 "Pipeline retries exhausted for sample %s job "
                                 "%s pipeline %s (attempt %d/%d): %s",
@@ -465,9 +529,17 @@ class Worker:
                                 total_attempts,
                                 error_message,
                             )
-                            raise RuntimeError(
-                                "Pipeline retries exhausted"
-                            ) from e
+                            # handle sample failure - send to DLQ or raise
+                            self.on_sample_failure(
+                                message=message,
+                                context=upstream_context,
+                                reason="retries_exhaused",
+                                error=e,
+                                start_time=start_time,
+                                end_time=end_time,
+                                current_attempt=current_attempt,
+                                max_attempts=total_attempts,
+                            )
 
                         next_attempt = current_attempt + 1
                         logger.warning(
@@ -517,9 +589,18 @@ class Worker:
                             total_attempts,
                             str(e),
                         )
-                        raise RuntimeError(
-                            "Non-retryable pipeline error"
-                        ) from e
+
+                        # handle sample failure - send to DLQ or raise
+                        self.on_sample_failure(
+                            message=message,
+                            context=upstream_context,
+                            reason="non-retryable",
+                            error=e,
+                            start_time=start_time,
+                            end_time=end_time,
+                            current_attempt=current_attempt,
+                            max_attempts=total_attempts,
+                        )
 
                     end_time = datetime.datetime.now(datetime.UTC)
                     self._retry_counts.pop(climb_id, None)
