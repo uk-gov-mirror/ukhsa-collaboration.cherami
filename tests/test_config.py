@@ -50,13 +50,17 @@ def valid_worker():
         "listen_queue_suffix": "listen",
         "publish_queue_suffix": "publish",
         "publish_exchange": "next-exchange",
+        "rerun_queue_suffix": "rerun_queue",
+        "rerun_exchange": "rerun_exchange",
+        "priority_queue_suffix": "priority_queue",
+        "priority_exchange": "priority_exchange",
         "varys_config_path": "/idont/exist/varys.json",
         "varys_log_path": "/idont/exist/varys.log",
     }
 
 
 def test_global_config_success(valid_global):
-    config = GlobalConfig.from_dict(valid_global)
+    config = GlobalConfig.from_dict(valid_global)  # ty:ignore[invalid-argument-type]
 
     assert config.work_dir == Path("/idont/exist/work")
     assert config.output_dir == Path("/idont/exist/output")
@@ -98,17 +102,34 @@ def test_worker_config_success(valid_worker):
     assert config.varys_config_path == Path("/idont/exist/varys.json")
 
 
-def test_worker_config_allow_none_optionals(valid_worker):
-    valid_worker["publish_queue_suffix"] = None
-    valid_worker["publish_exchange"] = None
+@pytest.mark.parametrize("queue", ["publish", "rerun", "priority"])
+def test_worker_config_allow_none_optionals(valid_worker, queue):
+    """Any of publish, rerun or priority queue suffix and exchange can be
+    None"""
+    valid_worker[f"{queue}_queue_suffix"] = None
+    valid_worker[f"{queue}_exchange"] = None
+
     config = WorkerConfig.from_dict(
         valid_worker,
         Path("/idont/exist/config.json"),
         "hash",
     )
 
-    assert config.publish_queue_suffix is None
-    assert config.publish_exchange is None
+    assert config.__dict__[f"{queue}_queue_suffix"] is None
+    assert config.__dict__[f"{queue}_exchange"] is None
+
+
+@pytest.mark.parametrize("field", ["listen_exchange", "listen_queue_suffix"])
+def test_worker_config_rejects_none(valid_worker, field):
+    valid_worker[field] = None
+    with pytest.raises(
+        ValueError, match=f"Worker config field cannot be null: {field}"
+    ):
+        WorkerConfig.from_dict(
+            valid_worker,
+            Path("/idont/exist/config.json"),
+            "hash",
+        )
 
 
 def test_worker_config_fail(valid_worker):

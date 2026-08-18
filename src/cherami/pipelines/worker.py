@@ -20,6 +20,10 @@ from cherami.utils import init_kubernetes, init_varys
 logger = logging.getLogger(__name__)
 
 
+class WorkerError(Exception):
+    """Error Occurs in worker."""
+
+
 @dataclass
 class PipelineResult:
     """Result of a pipeline execution attempt."""
@@ -62,6 +66,11 @@ class Worker:
         varys_log_path: Path to the Varys log file.
         publish_queue_suffix: Optional queue suffix for completion messages.
         publish_exchange: Optional exchange for completion messages.
+        rerun_queue_suffix: Optional queue suffix for upstream rerun.
+        rerun_exchange: Optional exchange for upstream rerun (NOTE: this is
+            not used to push messages to).
+        priority_queue_suffix: Optional queue suffix for priority queue.
+        priority_exchange: Optional exchange name for the priority messages.
         _config_path: Path to the worker configuration file.
         _startup_config_hash: Hash of the configuration at startup.
     """
@@ -90,6 +99,12 @@ class Worker:
             worker_config.publish_queue_suffix
         )
         self.publish_exchange: str | None = worker_config.publish_exchange
+        self.rerun_exchange: str | None = worker_config.rerun_exchange
+        self.rerun_queue_suffix: str | None = worker_config.rerun_queue_suffix
+        self.priority_exchange: str | None = worker_config.priority_exchange
+        self.priority_queue_suffix: str | None = (
+            worker_config.priority_queue_suffix
+        )
         self._config_path: Path = worker_config.config_path
         self._startup_config_hash: str = worker_config.config_hash
 
@@ -275,6 +290,38 @@ class Worker:
             duration=duration,
         )
 
+    def validate(self) -> None:
+        """
+        Pre-flight checks for the worker config.
+
+        Raises:
+            WorkerException - if any checks fail
+        """
+        # Publish exchange and queue cannot be None
+        if not self.listen_exchange or not self.listen_queue_suffix:
+            raise WorkerError(
+                "Listen exchange and/or queue suffic has not been set, "
+                "cannot consume messages."
+            )
+
+    def get_message(self) -> Any | None:
+        """
+        Default message consumption is to listen to one queue.
+
+        Overwrite this message to implement more complex message consumption
+        or priority.
+
+        Returns: varys_client message object or None.
+
+        """
+        message: Any = self._varys_client.receive(
+            exchange=self.listen_exchange,
+            queue_suffix=self.listen_queue_suffix,
+            prefetch_count=1,
+            timeout=1,
+        )
+        return message
+
     def run(self) -> None:
         """Execute the main worker loop.
 
@@ -285,14 +332,32 @@ class Worker:
                 initialisation failure.
             ValueError: If an incoming message cannot be parsed.
             Exception: If an unexpected error occurs and the worker exits.
+            WorkerError: if the queues are not set up adequately.
         """
+        self.validate()
         logger.info("Serving worker: %s", self.pipeline.config.name)
         self._varys_client = init_varys(
             self.varys_config_path,
             self.varys_log_path,
             "cherami",
         )
-        logger.info("Worker listening on exchange %s", self.listen_exchange)
+        logger.info(
+            "Worker listening on main exchange %s queue %s ",
+            self.listen_exchange,
+            self.listen_queue_suffix,
+        )
+        if self.rerun_exchange:
+            logger.info(
+                "Worker listening on rerun exchange %s queue %s ",
+                self.rerun_exchange,
+                self.rerun_queue_suffix,
+            )
+        if self.priority_exchange:
+            logger.info(
+                "Worker listening on priority exchange %s queue %s ",
+                self.priority_exchange,
+                self.priority_queue_suffix,
+            )
         self._runner = PipelineRunner(
             k8_api=init_kubernetes(),
         )
@@ -311,12 +376,7 @@ class Worker:
                 ## it goes back to the queue. If max_attempts is exhausted, call `on_sample_failure` to ack and handle
                 # the error to move on.
                 try:
-                    message = self._varys_client.receive(
-                        exchange=self.listen_exchange,
-                        queue_suffix=self.listen_queue_suffix,
-                        prefetch_count=1,
-                        timeout=1,
-                    )
+                    message = self.get_message()
                     if not message:
                         time.sleep(5)
                         continue

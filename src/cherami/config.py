@@ -73,6 +73,10 @@ class WorkerConfig:
     listen_queue_suffix: str
     publish_queue_suffix: str | None
     publish_exchange: str | None
+    rerun_queue_suffix: str | None
+    rerun_exchange: str | None
+    priority_queue_suffix: str | None
+    priority_exchange: str | None
     varys_config_path: Path
     varys_log_path: Path
     config_path: Path
@@ -88,9 +92,14 @@ class WorkerConfig:
         """Returns a WorkerConfig parsed from a raw config dictionary.
 
         Raises:
-            ValueError: If a required field is missing.
+            ValueError: If a required field is missing or contains invalid value.
         """
         try:
+            for field in ("listen_exchange", "listen_queue_suffix"):
+                if raw_config[field] is None:
+                    raise ValueError(
+                        f"Worker config field cannot be null: {field}"
+                    )
             return cls(
                 listen_exchange=str(raw_config["listen_exchange"]),
                 listen_queue_suffix=str(raw_config["listen_queue_suffix"]),
@@ -99,6 +108,18 @@ class WorkerConfig:
                 else None,
                 publish_exchange=str(raw_config["publish_exchange"])
                 if raw_config["publish_exchange"] is not None
+                else None,
+                rerun_queue_suffix=str(raw_config["rerun_queue_suffix"])
+                if raw_config["rerun_queue_suffix"] is not None
+                else None,
+                rerun_exchange=str(raw_config["rerun_exchange"])
+                if raw_config["rerun_exchange"] is not None
+                else None,
+                priority_queue_suffix=str(raw_config["priority_queue_suffix"])
+                if raw_config["priority_queue_suffix"] is not None
+                else None,
+                priority_exchange=str(raw_config["priority_exchange"])
+                if raw_config["priority_exchange"] is not None
                 else None,
                 varys_config_path=Path(raw_config["varys_config_path"]),
                 varys_log_path=Path(raw_config["varys_log_path"]),
